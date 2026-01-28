@@ -1,17 +1,17 @@
 const mongoose = require("mongoose");
 
 const AdminSchema = new mongoose.Schema({
-  gender: { type: String, required: true },
-  mobile: { type: String, required: true },
+  gender: { type: String, default: "" },
+  mobile: { type: String, default: "" },
   photo: { type: String, default: "" },
 });
 
 const CompanySchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  gstn: { type: String, required: true },
-  mobile: { type: String, required: true },
-  email: { type: String, required: true },
-  address: { type: String, required: true },
+  name: { type: String, default: "" },
+  gstn: { type: String, default: "" },
+  mobile: { type: String, default: "" },
+  email: { type: String, default: "" },
+  address: { type: String, default: "" },
   logo: { type: String, default: "" },
   signature: { type: String, default: "" },
 });

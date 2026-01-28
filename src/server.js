@@ -11,7 +11,6 @@ connectDB();
 
 // Start server
 app.listen(PORT, () => {
-  console.log("EMAIL_USER:", process.env.EMAIL_USER);
-console.log("EMAIL_PASS:", process.env.EMAIL_PASS);
+
   console.log(`Server running on http://localhost:${PORT}`);
 });

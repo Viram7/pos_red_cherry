@@ -1,3 +1,4 @@
+
 // src/controllers/auth.controller.js
 const User = require("../models/user.model");
 const bcrypt = require("bcryptjs");
@@ -98,7 +99,7 @@ exports.login = async (req, res) => {
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res.status(401).json({ message: "Invalid password" });
     }
 
     if (!process.env.JWT_SECRET) {

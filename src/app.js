@@ -46,6 +46,8 @@ app.use("/api/financer", financerRoutes);
 app.use("/api/schemeSeason", schemeSeasonRoutes);
 
 
+// MONGO_URI=mongodb://localhost:27017/pos_backend
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ message: "Route not found" });
