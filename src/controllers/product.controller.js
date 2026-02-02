@@ -56,23 +56,22 @@ const validateFields = (productFields = [], variants = []) => {
   });
 };
 
-
 const checkDuplicateBarcodes = async (newVariants) => {
-  // flatten all barcodes from new product variants
+  // Flatten all barcodes from new product variants
   const newBarcodes = newVariants.flatMap(v => v.barcodefield || []);
-
   if (newBarcodes.length === 0) return [];
 
-  // find any product that has at least one of these barcodes
+  // Find products where any variant has a barcode in newBarcodes
   const existingProducts = await Product.find(
-    { "variants.barcodefield": { $in: newBarcodes } },
-    { name: 1, "variants.$": 1 } // only fetch matching variants
+    { "variants.barcodefield": { $elemMatch: { $in: newBarcodes } } },
+    { name: 1, variants: 1 }
   );
 
   const duplicates = [];
 
   existingProducts.forEach(product => {
     product.variants.forEach(variant => {
+      if (!variant.barcodefield || variant.barcodefield.length === 0) return;
       const intersect = variant.barcodefield.filter(b => newBarcodes.includes(b));
       if (intersect.length > 0) {
         duplicates.push({
@@ -87,6 +86,7 @@ const checkDuplicateBarcodes = async (newVariants) => {
 
   return duplicates;
 };
+
 
 
 /**
