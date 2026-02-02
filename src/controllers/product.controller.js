@@ -56,6 +56,39 @@ const validateFields = (productFields = [], variants = []) => {
   });
 };
 
+
+const checkDuplicateBarcodes = async (newVariants) => {
+  // flatten all barcodes from new product variants
+  const newBarcodes = newVariants.flatMap(v => v.barcodefield || []);
+
+  if (newBarcodes.length === 0) return [];
+
+  // find any product that has at least one of these barcodes
+  const existingProducts = await Product.find(
+    { "variants.barcodefield": { $in: newBarcodes } },
+    { name: 1, "variants.$": 1 } // only fetch matching variants
+  );
+
+  const duplicates = [];
+
+  existingProducts.forEach(product => {
+    product.variants.forEach(variant => {
+      const intersect = variant.barcodefield.filter(b => newBarcodes.includes(b));
+      if (intersect.length > 0) {
+        duplicates.push({
+          productId: product._id,
+          productName: product.name,
+          variantSku: variant.variantSku,
+          barcodes: intersect,
+        });
+      }
+    });
+  });
+
+  return duplicates;
+};
+
+
 /**
  * CREATE Product (added to active warehouse)
  */
@@ -88,8 +121,21 @@ exports.createProduct = async (req, res) => {
       });
     }
 
+
+    const duplicates = await checkDuplicateBarcodes(variants);
+if (duplicates.length > 0) {
+  return res.status(400).json({
+    success: false,
+    message: "Some barcodes already exist in other products",
+    duplicates,
+  });
+}
+
+
     // validate payload
     validateFields(productFields, variants);
+
+
 
     // calculate totals
     const { totalStock, totalValue } = calculateTotals(variants);
@@ -231,10 +277,11 @@ exports.getProductById = async (req, res) => {
 /**
  * UPDATE Product (recalculate totals if variants change)
  */
+
 exports.updateProductInActiveWarehouse = async (req, res) => {
   try {
     const productId = req.params.id;
-    const updates = req.body;
+    const updates = { ...req.body }; // clone to modify safely
 
     const warehouse = await Warehouse.findOne({
       createdBy: req.user._id,
@@ -259,7 +306,7 @@ exports.updateProductInActiveWarehouse = async (req, res) => {
       });
     }
 
-    // validate updated fields
+    // Validate updated fields
     if (updates.productFields || updates.variants) {
       validateFields(
         updates.productFields || [],
@@ -267,13 +314,32 @@ exports.updateProductInActiveWarehouse = async (req, res) => {
       );
     }
 
-    // recalculate totals if variants updated
+    // Recalculate totals if variants updated
     if (updates.variants) {
       const totals = calculateTotals(updates.variants);
       updates.totalStock = totals.totalStock;
       updates.totalValue = totals.totalValue;
     }
 
+    // Handle barcodefield updates safely
+    if (updates.barcodefield && Array.isArray(updates.barcodefield)) {
+      // Use $addToSet to avoid duplicates
+      const product = await Product.findByIdAndUpdate(
+        productId,
+        { $addToSet: { barcodefield: { $each: updates.barcodefield } }, ...updates },
+        { new: true, runValidators: true }
+      )
+        .populate("category")
+        .populate("brand");
+
+      return res.status(200).json({
+        success: true,
+        message: "Product updated successfully",
+        product,
+      });
+    }
+
+    // Normal update if no barcodefield changes
     const product = await Product.findByIdAndUpdate(
       productId,
       updates,
@@ -295,6 +361,7 @@ exports.updateProductInActiveWarehouse = async (req, res) => {
     });
   }
 };
+
 
 /**
  * DELETE Product (from active warehouse only)

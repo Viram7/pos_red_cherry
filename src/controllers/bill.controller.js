@@ -3,6 +3,7 @@ const Invoice = require("../models/bill.model");
 const Product = require("../models/product.model");
 const Warehouse = require("../models/warehouse.model");
 
+
 /**
  * Helper: get active warehouse
  */
@@ -11,9 +12,12 @@ const getActiveWarehouse = async (userId) => {
 };
 
 /**
- * CREATE INVOICE
+ * CREATE INVOICE (BARCODE BASED STOCK REDUCTION)
  */
 exports.createInvoice = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const {
       customerName,
@@ -35,11 +39,8 @@ exports.createInvoice = async (req, res) => {
       });
     }
 
-    const warehouse = await Warehouse.findOne({
-      createdBy: req.user._id,
-      active: true,
-    });
-
+    /** 🔹 Active Warehouse */
+    const warehouse = await getActiveWarehouse(req.user._id);
     if (!warehouse) {
       return res.status(400).json({
         success: false,
@@ -47,72 +48,129 @@ exports.createInvoice = async (req, res) => {
       });
     }
 
-    /* 🔹 Calculate totals */
+    /** 🔹 Reduce stock by BARCODE */
+    for (const item of items) {
+      const { barcode } = item;
+
+      if (!barcode) {
+        throw new Error("Barcode missing in item");
+      }
+
+      const product = await Product.findOne(
+        { "variants.barcodefield": barcode },
+        null,
+        { session }
+      );
+
+      if (!product) {
+        throw new Error(`Product not found for barcode ${barcode}`);
+      }
+
+      const variant = product.variants.find(
+        (v) => v.barcodefield === barcode
+      );
+
+      if (!variant) {
+        throw new Error(`Variant not found for barcode ${barcode}`);
+      }
+
+      if (variant.quantity < 1) {
+        throw new Error(`Out of stock for barcode ${barcode}`);
+      }
+
+      // 🔻 Reduce stock
+      variant.quantity -= 1;
+
+      // 🔁 Recalculate totals
+      let totalStock = 0;
+      let totalValue = 0;
+
+      product.variants.forEach((v) => {
+        totalStock += v.quantity;
+        totalValue += v.quantity * v.price;
+      });
+
+      product.totalStock = totalStock;
+      product.totalValue = totalValue;
+
+      await product.save({ session });
+    }
+
+    /** 🔹 Invoice Calculations */
     let subTotal = 0;
-    let totalCost = 0; // ✅ REQUIRED
+    let totalCost = 0;
     let totalDiscount = 0;
 
     const processedItems = items.map((item) => {
-      const basePrice = item.qty * item.rate;
-      const itemDiscount = item.discount || 0;
-      const itemTotal = basePrice - itemDiscount;
+      const basePrice = item.rate;
+      const discount = item.discount || 0;
+      const total = basePrice - discount;
 
-      totalCost += basePrice; // ✅
-      totalDiscount += itemDiscount; // ✅
-      subTotal += itemTotal;
+      totalCost += basePrice;
+      totalDiscount += discount;
+      subTotal += total;
 
       return {
         ...item,
-        total: itemTotal,
+        qty: 1, // 🔥 fixed
+        total,
       };
     });
 
     if (extraDiscount > subTotal) {
-      return res.status(400).json({
-        success: false,
-        message: "Extra discount cannot exceed subtotal",
-      });
+      throw new Error("Extra discount cannot exceed subtotal");
     }
 
-    totalDiscount += extraDiscount; // ✅ include invoice-level discount
+    totalDiscount += extraDiscount;
 
     const taxableAmount = subTotal - extraDiscount;
     const taxAmount = tax?.rate ? (taxableAmount * tax.rate) / 100 : 0;
-
     const grandTotal = taxableAmount + taxAmount;
 
-    /* 🔹 Create Invoice */
-    const invoice = await Invoice.create({
-      customerName,
-      customerPhone,
-      billNumber,
-      tax,
-      notes,
-      items: processedItems,
-      extraDiscount,
-      cashAmount,
-      onlineAmount,
-      financeAmount,
+    /** 🔹 Create Invoice */
+    const invoice = await Invoice.create(
+      [
+        {
+          customerName,
+          customerPhone,
+          billNumber,
+          tax,
+          notes,
+          items: processedItems,
+          extraDiscount,
+          cashAmount,
+          onlineAmount,
+          financeAmount,
+          totalCost,
+          totalDiscount,
+          grandTotal,
+          warehouse: warehouse._id,
+          createdBy: req.user._id,
+        },
+      ],
+      { session }
+    );
 
-      totalCost,
-      totalDiscount,
-      grandTotal,
-      warehouse: warehouse._id,
-      createdBy: req.user._id,
-    });
+    await session.commitTransaction();
+    session.endSession();
 
     res.status(201).json({
       success: true,
       message: "Invoice created successfully",
-      data: invoice,
+      data: invoice[0],
     });
   } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+
     res.status(500).json({
       success: false,
       message: error.message,
     });
   }
 };
+
+
 
 /**
  * GET ALL INVOICES

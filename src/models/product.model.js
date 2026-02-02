@@ -50,8 +50,13 @@ const VariantSchema = new mongoose.Schema(
 
     barcodefield: {
       type: [String],
-     
-      default: [],
+  default: [],
+  validate: {
+    validator: function (arr) {
+      return arr.length === new Set(arr).size;
+    },
+    message: "Duplicate barcodes are not allowed"
+  }
     },
 
     fields: {
