@@ -56,16 +56,19 @@ const validateFields = (productFields = [], variants = []) => {
   });
 };
 
-const checkDuplicateBarcodes = async (newVariants) => {
-  // Flatten all barcodes from new product variants
+const checkDuplicateBarcodes = async (newVariants, excludeProductId = null) => {
   const newBarcodes = newVariants.flatMap(v => v.barcodefield || []);
   if (newBarcodes.length === 0) return [];
 
-  // Find products where any variant has a barcode in newBarcodes
-  const existingProducts = await Product.find(
-    { "variants.barcodefield": { $elemMatch: { $in: newBarcodes } } },
-    { name: 1, variants: 1 }
-  );
+  const query = {
+    "variants.barcodefield": { $elemMatch: { $in: newBarcodes } },
+  };
+
+  if (excludeProductId) {
+    query._id = { $ne: excludeProductId }; // exclude current product on update
+  }
+
+  const existingProducts = await Product.find(query, { name: 1, variants: 1 });
 
   const duplicates = [];
 
@@ -86,6 +89,7 @@ const checkDuplicateBarcodes = async (newVariants) => {
 
   return duplicates;
 };
+
 
 
 
@@ -185,6 +189,106 @@ if (duplicates.length > 0) {
 };
 
 /**
+ * UPDATE Product (recalculate totals if variants change)
+ */
+
+exports.updateProductInActiveWarehouse = async (req, res) => {
+  try {
+    const productId = req.params.id;
+    const updates = { ...req.body }; // clone to modify safely
+
+    const warehouse = await Warehouse.findOne({
+      createdBy: req.user._id,
+      active: true,
+    });
+
+    if (!warehouse) {
+      return res.status(404).json({
+        success: false,
+        message: "No active warehouse found",
+      });
+    }
+
+    const exists = warehouse.products.some(
+      (id) => id.toString() === productId
+    );
+
+    if (!exists) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found in active warehouse",
+      });
+    }
+
+    // Validate updated fields
+    if (updates.productFields || updates.variants) {
+      validateFields(
+        updates.productFields || [],
+        updates.variants || []
+      );
+    }
+
+    // Recalculate totals if variants updated
+    if (updates.variants) {
+
+
+        const duplicates = await checkDuplicateBarcodes(updates.variants, productId);
+  if (duplicates.length > 0) {
+    return res.status(400).json({
+      success: false,
+      message: "Some barcodes already exist in other products",
+      duplicates,
+    });
+  }
+
+      const totals = calculateTotals(updates.variants);
+      updates.totalStock = totals.totalStock;
+      updates.totalValue = totals.totalValue;
+    }
+
+    // Handle barcodefield updates safely
+    if (updates.barcodefield && Array.isArray(updates.barcodefield)) {
+      // Use $addToSet to avoid duplicates
+      const product = await Product.findByIdAndUpdate(
+        productId,
+        { $addToSet: { barcodefield: { $each: updates.barcodefield } }, ...updates },
+        { new: true, runValidators: true }
+      )
+        .populate("category")
+        .populate("brand");
+
+      return res.status(200).json({
+        success: true,
+        message: "Product updated successfully",
+        product,
+      });
+    }
+
+    // Normal update if no barcodefield changes
+    const product = await Product.findByIdAndUpdate(
+      productId,
+      updates,
+      { new: true, runValidators: true }
+    )
+      .populate("category")
+      .populate("brand");
+
+    res.status(200).json({
+      success: true,
+      message: "Product updated successfully",
+      product,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+
+/**
  * GET All Products in Active Warehouse
  */
 exports.getProductsInActiveWarehouse = async (req, res) => {
@@ -274,93 +378,6 @@ exports.getProductById = async (req, res) => {
   }
 };
 
-/**
- * UPDATE Product (recalculate totals if variants change)
- */
-
-exports.updateProductInActiveWarehouse = async (req, res) => {
-  try {
-    const productId = req.params.id;
-    const updates = { ...req.body }; // clone to modify safely
-
-    const warehouse = await Warehouse.findOne({
-      createdBy: req.user._id,
-      active: true,
-    });
-
-    if (!warehouse) {
-      return res.status(404).json({
-        success: false,
-        message: "No active warehouse found",
-      });
-    }
-
-    const exists = warehouse.products.some(
-      (id) => id.toString() === productId
-    );
-
-    if (!exists) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found in active warehouse",
-      });
-    }
-
-    // Validate updated fields
-    if (updates.productFields || updates.variants) {
-      validateFields(
-        updates.productFields || [],
-        updates.variants || []
-      );
-    }
-
-    // Recalculate totals if variants updated
-    if (updates.variants) {
-      const totals = calculateTotals(updates.variants);
-      updates.totalStock = totals.totalStock;
-      updates.totalValue = totals.totalValue;
-    }
-
-    // Handle barcodefield updates safely
-    if (updates.barcodefield && Array.isArray(updates.barcodefield)) {
-      // Use $addToSet to avoid duplicates
-      const product = await Product.findByIdAndUpdate(
-        productId,
-        { $addToSet: { barcodefield: { $each: updates.barcodefield } }, ...updates },
-        { new: true, runValidators: true }
-      )
-        .populate("category")
-        .populate("brand");
-
-      return res.status(200).json({
-        success: true,
-        message: "Product updated successfully",
-        product,
-      });
-    }
-
-    // Normal update if no barcodefield changes
-    const product = await Product.findByIdAndUpdate(
-      productId,
-      updates,
-      { new: true, runValidators: true }
-    )
-      .populate("category")
-      .populate("brand");
-
-    res.status(200).json({
-      success: true,
-      message: "Product updated successfully",
-      product,
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(400).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
 
 
 /**
