@@ -66,9 +66,9 @@ exports.createInvoice = async (req, res) => {
         throw new Error(`Product not found for barcode ${barcode}`);
       }
 
-      const variant = product.variants.find(
-        (v) => v.barcodefield === barcode
-      );
+     const variant = product.variants.find(
+  (v) => String(v.barcodefield) === String(barcode)
+);
 
       if (!variant) {
         throw new Error(`Variant not found for barcode ${barcode}`);
