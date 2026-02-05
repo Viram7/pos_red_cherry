@@ -33,14 +33,16 @@ async function generateBillNumber() {
 
   if (lastBill?.billNumber) {
     const parts = lastBill.billNumber.split("-");
-    const lastSeq = parseInt(parts[2], 10);
-    nextNumber = isNaN(lastSeq) ? 1 : lastSeq + 1;
+    nextNumber = parseInt(parts[2], 10) + 1;
   }
 
-  const date = new Date()
+  // keep TODAY's date (or you can keep last bill date if you want)
+  const today = new Date()
     .toISOString()
     .slice(0, 10)
     .replace(/-/g, "");
 
-  return `BR01-${date}-${String(nextNumber).padStart(4, "0")}`;
+  return `BR01-${today}-${String(nextNumber).padStart(4, "0")}`;
 }
+
+

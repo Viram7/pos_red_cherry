@@ -18,6 +18,8 @@ const taxRoutes = require("./routes/tax.routes");
 const financerRoutes = require("./routes/fainencer.routes");
 
 const schemeSeasonRoutes = require("./routes/schemeSeason.routes");
+const customerRoutes = require("./routes/customer.routes");
+
 
 
 
@@ -44,6 +46,7 @@ app.use("/api", orderRoutes);
 app.use("/api/tax", taxRoutes);
 app.use("/api/financer", financerRoutes);
 app.use("/api/schemeSeason", schemeSeasonRoutes);
+app.use("/api/customers", customerRoutes);
 
 
 // MONGO_URI=mongodb://localhost:27017/pos_backend

@@ -28,14 +28,66 @@ const ItemSchema = new mongoose.Schema({
   
 });
 
+
+const CreditHistorySchema = new mongoose.Schema({
+  promisedDate: {
+    type: Date,
+    required: true,
+  },
+
+  amountExpected: {
+    type: Number,
+    required: true,
+  },
+
+  paidAmount: {
+    type: Number,
+    default: 0,
+  },
+
+  status: {
+    type: String,
+    enum: ["pending", "partial", "paid"],
+    default: "pending",
+  },
+
+  note: {
+    type: String,
+  },
+
+  createdAt: {
+    type: Date,
+    default: Date.now,
+  },
+});
+
+
 const InvoiceSchema = new mongoose.Schema(
   {
+
+        customerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Customer',
+      required: true, // true if customer is mandatory
+    },
+
     customerName: { type: String, required: true },
     customerPhone: { type: String, required: true },
     customerGst: { type: String },
 
+
+Transport: { type: String },
+From: { type: String },
+TO: { type: String },
+Cases: { type: String },
+LR: { type: String },
+TR_Date: { type: Date },
+
+
+    
+
     billingDate: { type: Date, default: Date.now },
-     billNumber: { type: String, required: true},
+     billNumber: { type: String, required: true ,unique: true},  
   tax: {
     name : { type: String },
     rate : { type: Number}
@@ -46,6 +98,11 @@ const InvoiceSchema = new mongoose.Schema(
     cashAmount: { type: Number, default: 0 },
     onlineAmount: { type: Number, default: 0 },
     financeAmount: { type: Number, default: 0 },
+        // AUTO CALCULATED CREDIT (UDHAR)
+    creditAmount: { type: Number, default: 0 },      // total udhar
+    remainingAmount: { type: Number, default: 0 },   // abhi baaki
+
+    creditHistory: [CreditHistorySchema],
 
     extraDiscount: { type: Number, default: 0 },
 

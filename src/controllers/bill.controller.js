@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const Invoice = require("../models/bill.model");
 const Product = require("../models/product.model");
 const Warehouse = require("../models/warehouse.model");
+const Customers = require("../models/customer.model");
 
 
 /**
@@ -14,21 +15,31 @@ const getActiveWarehouse = async (userId) => {
 /**
  * CREATE INVOICE (BARCODE BASED STOCK REDUCTION)
  */
+/**
+ * CREATE INVOICE (BARCODE BASED STOCK REDUCTION + AUTO CREDIT)
+ */
 exports.createInvoice = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const {
+      customerId,
       customerName,
       customerPhone,
       billNumber,
       tax,
       notes,
       items,
+
       cashAmount = 0,
       onlineAmount = 0,
       financeAmount = 0,
+
+      // 🔹 CREDIT INPUT (only if credit exists)
+      creditDate,     // promised date from frontend
+      creditNote,     // optional
+
       extraDiscount = 0,
     } = req.body;
 
@@ -48,40 +59,54 @@ exports.createInvoice = async (req, res) => {
       });
     }
 
+     const customer = await Customers.findById(customerId).session(session);
+     if(!customer) {
+      return res.status(400).json({
+        success: false,
+        message: "Customer not found",
+      });
+     }
+
+     if(customer.creditLimit < 0) {
+
+          return res.status(400).json({
+        success: false,
+        message: `Customer has ${customer.creditLimit}  credit limit`,
+      });
+
+     }
     /** 🔹 Reduce stock by BARCODE */
     for (const item of items) {
       const { barcode } = item;
 
-      if (!barcode) {
-        throw new Error("Barcode missing in item");
-      }
+      if (!barcode) throw new Error("Barcode missing in item");
 
-      const product = await Product.findOne(
-        { "variants.barcodefield": barcode },
-        null,
-        { session }
-      );
 
-      if (!product) {
-        throw new Error(`Product not found for barcode ${barcode}`);
-      }
+const cleanBarcode = String(barcode).trim();
 
-     const variant = product.variants.find(
-  (v) => String(v.barcodefield) === String(barcode)
+const product = await Product.findOne(
+  { "variants.barcodefield": cleanBarcode },
+  null,
+  { session }
 );
 
-      if (!variant) {
-        throw new Error(`Variant not found for barcode ${barcode}`);
-      }
+if (!product) {
+  throw new Error(`Product not found for barcode ${cleanBarcode}`);
+}
 
-      if (variant.quantity < 1) {
+const variant = product.variants.find(v =>
+  Array.isArray(v.barcodefield) &&
+  v.barcodefield.includes(cleanBarcode)
+);
+
+if (!variant) {
+  throw new Error(`Variant not found for barcode ${cleanBarcode}`);
+}
+      if (variant.quantity < 1)
         throw new Error(`Out of stock for barcode ${barcode}`);
-      }
 
-      // 🔻 Reduce stock
       variant.quantity -= 1;
 
-      // 🔁 Recalculate totals
       let totalStock = 0;
       let totalValue = 0;
 
@@ -112,7 +137,7 @@ exports.createInvoice = async (req, res) => {
 
       return {
         ...item,
-        qty: 1, // 🔥 fixed
+        qty: 1,
         total,
       };
     });
@@ -127,23 +152,75 @@ exports.createInvoice = async (req, res) => {
     const taxAmount = tax?.rate ? (taxableAmount * tax.rate) / 100 : 0;
     const grandTotal = taxableAmount + taxAmount;
 
+    /** 🔹 AUTO CREDIT CALCULATION */
+    const paidNow =
+      Number(cashAmount) +
+      Number(onlineAmount) +
+      Number(financeAmount);
+
+    if (paidNow > grandTotal) {
+      throw new Error("Paid amount cannot exceed grand total");
+    }
+
+    const creditAmount = grandTotal - paidNow;
+
+
+         if(customer.creditLimit < creditAmount) {
+
+          return res.status(400).json({
+        success: false,
+        message: `Customer has low credit limit`,
+      });
+
+     }
+
+
+     customer.creditLimit -= creditAmount;
+     await customer.save({ session });
+
+    const remainingAmount = creditAmount;
+
+    /** 🔹 Prepare Credit History */
+    let creditHistory = [];
+
+    if (creditAmount > 0) {
+      if (!creditDate) {
+        throw new Error("Credit date is required when amount is pending");
+      }
+
+      creditHistory.push({
+        promisedDate: creditDate,
+        amountExpected: creditAmount,
+        note: creditNote || "Initial credit",
+      });
+    }
+
     /** 🔹 Create Invoice */
     const invoice = await Invoice.create(
       [
         {
+          customerId,
           customerName,
           customerPhone,
           billNumber,
           tax,
           notes,
+
           items: processedItems,
           extraDiscount,
+
           cashAmount,
           onlineAmount,
           financeAmount,
+
+          creditAmount,
+          remainingAmount,
+          creditHistory,
+
           totalCost,
           totalDiscount,
           grandTotal,
+
           warehouse: warehouse._id,
           createdBy: req.user._id,
         },
@@ -172,6 +249,7 @@ exports.createInvoice = async (req, res) => {
 
 
 
+
 /**
  * GET ALL INVOICES
  */
@@ -191,10 +269,12 @@ exports.getInvoices = async (req, res) => {
       createdAt: -1,
     });
 
+
     res.status(200).json({
       success: true,
       count: invoices.length,
       data: invoices,
+  
     });
   } catch (error) {
     res.status(500).json({
@@ -223,6 +303,15 @@ exports.getInvoiceById = async (req, res) => {
       warehouse: warehouse._id,
     });
 
+    const customer = await Customers.findById(invoice.customerId);
+
+
+        if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: "customer not found",
+      });
+    }
     if (!invoice) {
       return res.status(404).json({
         success: false,
@@ -233,6 +322,7 @@ exports.getInvoiceById = async (req, res) => {
     res.status(200).json({
       success: true,
       data: invoice,
+      customer:customer,
     });
   } catch (error) {
     res.status(500).json({
@@ -326,5 +416,143 @@ exports.deleteInvoice = async (req, res) => {
       success: false,
       message: error.message,
     });
+  }
+};
+
+
+
+
+exports.receivePayment = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { invoiceId, payAmount, mode, note } = req.body;
+
+    const invoice = await Invoice.findById(invoiceId).session(session);
+    if (!invoice) {
+      throw new Error("Invoice not found");
+    }
+
+    if (payAmount <= 0) {
+      throw new Error("Invalid payment amount");
+    }
+
+    if (payAmount > invoice.remainingAmount) {
+      throw new Error("Payment exceeds remaining amount");
+    }
+
+    // 🔹 Update payment mode amount
+    if (mode === "cash") invoice.cashAmount += payAmount;
+    if (mode === "online") invoice.onlineAmount += payAmount;
+    if (mode === "finance") invoice.financeAmount += payAmount;
+
+    // 🔹 Update remaining
+    invoice.remainingAmount -= payAmount;
+
+    // 🔹 Update credit history (latest pending)
+    const creditEntry = invoice.creditHistory
+      .slice()
+      .reverse()
+      .find(c => c.status !== "paid");
+
+    if (!creditEntry) {
+      throw new Error("No pending credit entry found");
+    }
+
+    creditEntry.paidAmount += payAmount;
+
+    if (creditEntry.paidAmount >= creditEntry.amountExpected) {
+      creditEntry.status = "paid";
+    } else {
+      creditEntry.status = "partial";
+    }
+
+    if (note) creditEntry.note = note;
+
+      Customers.findByIdAndUpdate(
+      invoice.customerId,
+      { $inc: { creditLimit: payAmount } },
+      { session }
+    );
+
+    
+    await invoice.save({ session });
+    await session.commitTransaction();
+
+  
+
+    res.status(200).json({
+      success: true,
+      message: "Payment received successfully",
+      invoice,
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+
+
+exports.addNewPromisedDate = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { invoiceId, promisedDate, note } = req.body;
+
+    const invoice = await Invoice.findById(invoiceId).session(session);
+    if (!invoice) {
+      throw new Error("Invoice not found");
+    }
+
+    if (invoice.remainingAmount <= 0) {
+      throw new Error("No remaining amount to promise");
+    }
+
+    // 🔹 Close last credit entry if still pending/partial
+    const lastEntry = invoice.creditHistory
+      .slice()
+      .reverse()
+      .find(c => c.status !== "paid");
+
+    if (lastEntry) {
+      lastEntry.status =
+        lastEntry.paidAmount > 0 ? "partial" : "pending";
+    }
+
+    // 🔹 Create new promise
+    invoice.creditHistory.push({
+      promisedDate: new Date(promisedDate),
+      amountExpected: invoice.remainingAmount,
+      paidAmount: 0,
+      status: "pending",
+      note,
+    });
+
+    await invoice.save({ session });
+    await session.commitTransaction();
+
+    res.status(200).json({
+      success: true,
+      message: "New promised date added successfully",
+      creditHistory: invoice.creditHistory,
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+    res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  } finally {
+    session.endSession();
   }
 };

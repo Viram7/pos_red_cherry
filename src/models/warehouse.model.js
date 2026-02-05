@@ -27,6 +27,8 @@ const WarehouseSchema = new mongoose.Schema(
 
     taxes: [{ type: mongoose.Schema.Types.ObjectId, ref: "Tax" }],
 
+    customers: [{ type: mongoose.Schema.Types.ObjectId, ref: "Customer" }],
+
 
 
 
