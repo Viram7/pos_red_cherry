@@ -14,7 +14,7 @@ const testConnection = async () => {
     const uri = `mongodb://${hosts}/pos_red_cherry?authSource=admin&ssl=true`;
     
     console.log("Connecting to:", uri);
-    
+    // /ddf
     await mongoose.connect(uri, {
       auth: {
         username: 'kushwahavicky15',
